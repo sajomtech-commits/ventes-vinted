@@ -1,7 +1,6 @@
-const SUPABASE_URL = 'https://supabase.sagetech.vip'
-const SUPABASE_KEY = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc3ODc4NTIwMCwiZXhwIjo0OTM0NDU4ODAwLCJyb2xlIjoiYW5vbiJ9.dSLctp2RLKsNnrcsxhFafEEeyCSxVHPDpntVPoaJXrA'
-
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } })
+const SUPABASE_URL = window.SUPABASE_URL || ''
+const SUPABASE_KEY = window.SUPABASE_KEY || ''
+let supabaseClient
 
 const state = { ventes: [], searchQuery: '', selectedItem: null }
 let debounceTimer
@@ -16,7 +15,21 @@ document.addEventListener('DOMContentLoaded', init)
 function init() {
   registerSW()
   bindEvents()
-  loadData()
+  if (!SUPABASE_URL || !SUPABASE_KEY || SUPABASE_KEY.includes('votre-cle')) {
+    $('#main-content').innerHTML = `
+      <div class=empty-state style=margin-top:60px>
+        <div class=ico>⚙️</div>
+        <p style=font-size:16px>Configurez vos clés Supabase</p>
+        <p style="font-size:13px;color:#94a3b8;margin-top:8px">Créez <strong>config.js</strong> à partir de config.example.js<br>avec vos vraies clés</p>
+      </div>`
+    return
+  }
+  try {
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } })
+    loadData()
+  } catch (e) {
+    $('#main-content').innerHTML = `<div class=empty-state><p>Erreur Supabase : ${e.message}</p></div>`
+  }
 }
 
 function registerSW() {
