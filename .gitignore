@@ -2,3 +2,5 @@
 .env
 conversations/
 node_modules/
+
+CONVERSATION.md
