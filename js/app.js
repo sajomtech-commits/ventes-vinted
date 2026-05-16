@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', init)
 function init() {
   registerSW()
   bindEvents()
-  if (!SUPABASE_URL || !SUPABASE_KEY) {
+  if (!SUPABASE_URL || !SUPABASE_KEY || SUPABASE_KEY === 'votre-cle-anon-publique') {
     $('#main-content').innerHTML = `
       <div class=empty-state style=margin-top:60px>
         <div class=ico>⚙️</div>
