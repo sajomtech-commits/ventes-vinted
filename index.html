@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#6366f1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='80' fill='%236366f1'/%3E%3Ctext x='256' y='340' font-size='280' text-anchor='middle' fill='white'%3E%F0%9F%91%94%3C/text%3E%3C/svg%3E">
+<title>Ma Vitrine</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Ma <span>Vitrine</span></h1>
+  <div class=recherche-bar onclick="openSearch()">
+    <span class=icon>🔍</span>
+    <input type=text placeholder="Rechercher..." readonly>
+  </div>
+</header>
+
+<main id=main-content>
+  <div class=loading><div class=spin></div>Chargement...</div>
+</main>
+
+<button class=fab id=fab onclick="toggleFab()">+</button>
+<div class=fab-menu id=fabMenu>
+  <button class=btn-stock onclick="showAddForm()"><span class=ico>📥</span> Nouvel article</button>
+  <button class=btn-vendre onclick="showSellFormFromFab()"><span class=ico>💰</span> Vendre</button>
+  <button class=btn-donne onclick="showDonneForm()"><span class=ico>🎁</span> Donné</button>
+</div>
+
+<div class=overlay id=overlay-master></div>
+<div class=modal id=modal-master></div>
+
+<div class=search-overlay id=searchOverlay>
+  <div class=search-hd>
+    <input id=searchInput type=text placeholder="🔍 Rechercher un article..." autofocus oninput="doSearch()">
+    <button class=close onclick="closeSearch()">✕</button>
+  </div>
+  <div class=search-results id=searchResults>
+    <div class=empty-state><p>Tapez pour chercher</p></div>
+  </div>
+</div>
+
+<div class=toast id=toast></div>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
