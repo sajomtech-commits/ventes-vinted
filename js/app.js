@@ -1,35 +1,29 @@
 const SUPABASE_URL = window.SUPABASE_URL || ''
 const SUPABASE_KEY = window.SUPABASE_KEY || ''
-let supabaseClient
 
-const state = { ventes: [], searchQuery: '', selectedItem: null }
+const state = { ventes: [] }
 let debounceTimer
 
 const formatPrix = n => (n || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
 const now = () => new Date().toISOString().slice(0, 10)
-const $$ = s => document.querySelectorAll(s)
 const $ = s => document.querySelector(s)
+const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 document.addEventListener('DOMContentLoaded', init)
 
 function init() {
   registerSW()
   bindEvents()
-  if (!SUPABASE_URL || !SUPABASE_KEY || SUPABASE_KEY === 'votre-cle-anon-publique') {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
     $('#main-content').innerHTML = `
       <div class=empty-state style=margin-top:60px>
         <div class=ico>⚙️</div>
-        <p style=font-size:16px>Configurez vos clés Supabase</p>
-        <p style="font-size:13px;color:#94a3b8;margin-top:8px">Créez <strong>config.js</strong> à partir de config.example.js<br>avec vos vraies clés</p>
+        <p style=font-size:16px>Configurez les clés Supabase</p>
+        <p style=font-size:13px;color:#94a3b8;margin-top:8px>Vérifiez config.example.js ou créez config.js</p>
       </div>`
     return
   }
-  try {
-    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } })
-    loadData()
-  } catch (e) {
-    $('#main-content').innerHTML = `<div class=empty-state><p>Erreur Supabase : ${e.message}</p></div>`
-  }
+  loadData()
 }
 
 function registerSW() {
@@ -53,18 +47,63 @@ function escHtml(s) {
   return d.innerHTML
 }
 
-async function loadData() {
-  $('#main-content').innerHTML = '<div class=loading><div class=spin></div>Chargement...</div>'
+// === API DIRECTE via fetch ===
+async function api(path, opts = {}) {
+  const url = SUPABASE_URL + '/rest/v1/' + path
+  const headers = {
+    apikey: SUPABASE_KEY,
+    Authorization: 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json',
+    ...(opts.headers || {})
+  }
+  if (opts.method === 'GET' || !opts.method) {
+    headers.Prefer = 'count=exact'
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15000)
+
   try {
-    const { data, error } = await supabaseClient.from('ventes').select('*').order('id', { ascending: false })
-    if (error) throw error
-    state.ventes = data || []
-    render()
+    const res = await fetch(url, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: controller.signal
+    })
+    clearTimeout(timer)
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`${res.status} ${text.slice(0, 200)}`)
+    }
+    if (opts.method === 'DELETE' || opts.method === 'PATCH' || res.status === 201) return true
+    return await res.json()
   } catch (e) {
-    $('#main-content').innerHTML = `<div class=empty-state><div class=ico>⚠️</div><p>Erreur de connexion : ${e.message}</p></div>`
+    clearTimeout(timer)
+    throw e
   }
 }
 
+function apiUrl(path) {
+  return SUPABASE_URL + '/rest/v1/' + path
+}
+
+async function loadData() {
+  $('#main-content').innerHTML = '<div class=loading><div class=spin></div>Chargement...</div>'
+  try {
+    const data = await api('ventes?order=id.desc')
+    state.ventes = data || []
+    render()
+  } catch (e) {
+    $('#main-content').innerHTML = `
+      <div class=empty-state style=margin-top:40px>
+        <div class=ico>⚠️</div>
+        <p style=font-size:15px>Erreur de connexion</p>
+        <p style=font-size:13px;color:#94a3b8;margin-top:6px>${escHtml(e.message)}</p>
+        <button onclick="loadData()" style="margin-top:16px;padding:10px 24px;border:none;border-radius:10px;background:#6366f1;color:#fff;font-size:14px;font-weight:600;cursor:pointer">🔄 Réessayer</button>
+      </div>`
+  }
+}
+
+// === RENDU ===
 function render() {
   const data = state.ventes
   const vendus = data.filter(d => d.statut === 'vendu')
@@ -122,7 +161,7 @@ function sectionHtml(title, items) {
         ${items.map(cardHtml).join('')}
       </div>
       <div style="text-align:right;padding:2px 0 8px">
-        <button class="btn-secondary" style="font-size:12px;padding:6px 14px;border:none;border-radius:8px;cursor:pointer;background:#e2e8f0;color:#64748b" onclick="showFilter('${items[0].statut}')">Voir tout →</button>
+        <button onclick="showFilter('${items[0].statut}')" style="font-size:12px;padding:6px 14px;border:none;border-radius:8px;cursor:pointer;background:#e2e8f0;color:#64748b">Voir tout →</button>
       </div>
     </div>
   `
@@ -158,11 +197,13 @@ function renderListItem(d) {
 
 function highlight(text, q) {
   if (!q || !text) return text || ''
-  const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  return text.replace(re, '<mark style="background:#fef08a;padding:0 2px;border-radius:2px">$1</mark>')
+  try {
+    const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+    return text.replace(re, '<mark style="background:#fef08a;padding:0 2px;border-radius:2px">$1</mark>')
+  } catch(_) { return text }
 }
 
-// Search
+// === RECHERCHE ===
 function openSearch() {
   $('#searchOverlay').classList.add('open')
   $('#searchInput').value = ''
@@ -178,10 +219,7 @@ window.doSearch = function() {
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     const q = $('#searchInput').value.trim().toLowerCase()
-    if (!q) {
-      $('#searchResults').innerHTML = '<div class=empty-state><p>Tapez pour chercher</p></div>'
-      return
-    }
+    if (!q) { $('#searchResults').innerHTML = '<div class=empty-state><p>Tapez pour chercher</p></div>'; return }
     const r = state.ventes.filter(d =>
       (d.produit || '').toLowerCase().includes(q) ||
       (d.fournisseur || '').toLowerCase().includes(q) ||
@@ -189,10 +227,7 @@ window.doSearch = function() {
       (d.commentaire || '').toLowerCase().includes(q) ||
       (d.source || '').toLowerCase().includes(q)
     )
-    if (!r.length) {
-      $('#searchResults').innerHTML = '<div class=empty-state><div class=ico>🔍</div><p>Aucun résultat</p></div>'
-      return
-    }
+    if (!r.length) { $('#searchResults').innerHTML = '<div class=empty-state><div class=ico>🔍</div><p>Aucun résultat</p></div>'; return }
     $('#searchResults').innerHTML = r.map(d => {
       const c = d.statut === 'vendu' ? 'var(--vert)' : d.statut === 'en_stock' ? 'var(--bleu)' : 'var(--rouge)'
       return `
@@ -202,13 +237,12 @@ window.doSearch = function() {
             <div class=det>${d.statut.replace('_',' ')}${d.plateforme ? ' · ' + escHtml(d.plateforme) : ''}${d.date_vente || d.date_achat ? ' · ' + (d.date_vente || d.date_achat) : ''}</div>
           </div>
           <div class=mnt style="color:${c}">${d.statut === 'vendu' ? formatPrix(d.prix_vente) : d.prix_achat ? formatPrix(d.prix_achat) : '—'}</div>
-        </div>
-      `
+        </div>`
     }).join('')
   }, 150)
 }
 
-// Filter view
+// === FILTRE ===
 let _filterStatut
 function showFilter(statut) {
   _filterStatut = statut
@@ -216,7 +250,7 @@ function showFilter(statut) {
   openModal(`
     <div class=handle></div>
     <h2>${statut === 'vendu' ? '💰 Vendus' : statut === 'en_stock' ? '📦 En stock' : '🎁 Donnés'}</h2>
-    <div style="margin-bottom:12px">
+    <div style=margin-bottom:12px>
       <input id=filterInput type=text placeholder="Filtrer..." style="width:100%;padding:10px;border:2px solid #e2e8f0;border-radius:10px;font-size:14px;outline:none" oninput="filterView()">
     </div>
     <div id=filterList>${items.map(renderListItem).join('')}</div>
@@ -230,7 +264,7 @@ window.filterView = function() {
   $('#filterList').innerHTML = items.length ? items.map(renderListItem).join('') : '<div class=empty-state><p>Aucun résultat</p></div>'
 }
 
-// Modal
+// === MODAL ===
 function openModal(html) {
   $('#overlay-master').classList.add('open')
   $('#modal-master').classList.add('open')
@@ -243,12 +277,11 @@ function closeMaster() {
   state.selectedItem = null
 }
 
-// Detail
+// === DÉTAIL ===
 function openDetail(id) {
   const d = state.ventes.find(x => x.id === id)
   if (!d) return
   state.selectedItem = d
-  const label = d.statut === 'vendu' ? 'vendu' : d.statut === 'en_stock' ? 'en stock' : 'donné'
   const bg = d.statut === 'vendu' ? '#d1fae5' : d.statut === 'en_stock' ? '#dbeafe' : '#fee2e2'
   const fg = d.statut === 'vendu' ? '#065f46' : d.statut === 'en_stock' ? '#1e40af' : '#991b1b'
 
@@ -266,37 +299,30 @@ function openDetail(id) {
   addLine('Statut pub', escHtml(d.statut_pub))
   addLine('Commentaire', escHtml(d.commentaire))
 
-  const actions = d.statut === 'vendu' ? '' : `
-    <button class="btn-modif" onclick="closeMaster();showSellForm(${d.id})">💰 Vendre</button>
-  `
-
   openModal(`
     <div class=handle></div>
     <div class="detail-card" style="box-shadow:none;margin:0">
       <div class=dc-hd>
         <div class=dc-nom>${escHtml(d.produit || 'Sans nom')}</div>
-        <span class=dc-stat style="background:${bg};color:${fg}">${label}</span>
+        <span class=dc-stat style="background:${bg};color:${fg}">${d.statut.replace('_',' ')}</span>
       </div>
       <div class=dc-body>${body || '<p style="color:var(--text2)">Aucune information</p>'}</div>
       <div class=dc-actions>
-        ${actions}
+        ${d.statut === 'vendu' ? '' : `<button class="btn-modif" onclick="closeMaster();showSellForm(${d.id})">💰 Vendre</button>`}
         <button class="btn-suppr" onclick="deleteItem(${d.id})">🗑 Supprimer</button>
       </div>
     </div>
   `)
 }
 
-// FAB
+// === FAB ===
 function toggleFab() {
   $('#fab').classList.toggle('open')
   $('#fabMenu').classList.toggle('open')
 }
+function closeFab() { $('#fab').classList.remove('open'); $('#fabMenu').classList.remove('open') }
 
-function closeFab() {
-  $('#fab').classList.remove('open')
-  $('#fabMenu').classList.remove('open')
-}
-
+// === DISTINCT VALUES ===
 function distinctVals(field) {
   const s = new Set()
   state.ventes.forEach(d => { if (d[field]) s.add(d[field]) })
@@ -320,12 +346,8 @@ function selectFieldHtml(name, label, placeholder) {
 window.toggleCustomField = function(name) {
   const sel = $(`#sel-${name}`)
   const inp = $(`#custom-${name}`)
-  if (sel.value === '__new__') {
-    inp.style.display = 'block'
-    inp.focus()
-  } else {
-    inp.style.display = 'none'
-  }
+  if (sel.value === '__new__') { inp.style.display = 'block'; inp.focus() }
+  else inp.style.display = 'none'
 }
 
 function fieldValue(name) {
@@ -335,38 +357,28 @@ function fieldValue(name) {
   return sel.value || null
 }
 
+// === VENDRE (depuis FAB) ===
 function showSellFormFromFab() {
   closeFab()
   const stock = state.ventes.filter(d => d.statut === 'en_stock')
-  if (!stock.length) {
-    toast('📦 Aucun article en stock')
-    return
-  }
-  const listHtml = stock.map(d => `
-    <div class="search-card" style="border-left-color:var(--bleu);margin-bottom:6px;cursor:pointer" onclick="closeMaster();showSellForm(${d.id})">
-      <div class=info>
-        <div class=nom>${escHtml(d.produit || '')}</div>
-        <div class=det>Acheté ${formatPrix(d.prix_achat)}${d.date_achat ? ' le ' + d.date_achat : ''}</div>
-      </div>
-      <div class=mnt>💰</div>
-    </div>
-  `).join('')
-
+  if (!stock.length) { toast('📦 Aucun article en stock'); return }
   openModal(`
     <div class=handle></div>
     <h2>💰 Vendre un article</h2>
-    <p style="color:var(--text2);margin-bottom:12px">Sélectionnez l'article à vendre :</p>
-    ${listHtml}
-    <div class=btn-group style="margin-top:12px">
-      <button class="btn-secondary" onclick="closeMaster()" style="width:100%">Annuler</button>
-    </div>
+    <p style="color:var(--text2);margin-bottom:12px">Sélectionnez l'article :</p>
+    ${stock.map(d => `
+      <div class="search-card" style="border-left-color:var(--bleu);margin-bottom:6px;cursor:pointer" onclick="closeMaster();showSellForm(${d.id})">
+        <div class=info><div class=nom>${escHtml(d.produit || '')}</div><div class=det>Acheté ${formatPrix(d.prix_achat)}${d.date_achat ? ' le ' + d.date_achat : ''}</div></div>
+        <div class=mnt>💰</div>
+      </div>
+    `).join('')}
+    <div class=btn-group style=margin-top:12px><button class=btn-secondary onclick="closeMaster()" style="width:100%;padding:12px;border:none;border-radius:10px;background:#e2e8f0;color:#64748b;font-weight:600;font-size:14px;cursor:pointer">Annuler</button></div>
   `)
 }
 
-// Forms
+// === AJOUT ARTICLE ===
 function showAddForm() {
-  closeFab()
-  closeMaster()
+  closeFab(); closeMaster()
   openModal(`
     <div class=handle></div>
     <h2>📥 Nouvel article</h2>
@@ -394,37 +406,27 @@ async function addItem(e) {
   e.preventDefault()
   const fd = new FormData(e.target)
   const data = {
-    produit: fd.get('produit'),
-    statut: 'en_stock',
+    produit: fd.get('produit'), statut: 'en_stock',
     prix_achat: fd.get('prix_achat') ? parseFloat(fd.get('prix_achat')) : null,
-    fournisseur: fieldValue('fournisseur'),
-    source: fieldValue('source'),
+    fournisseur: fieldValue('fournisseur'), source: fieldValue('source'),
     date_achat: fd.get('date_achat') ? fd.get('date_achat').split('-').reverse().join('/') : null,
-    plateforme: fieldValue('plateforme'),
-    commentaire: fd.get('commentaire') || null,
-    created_at: new Date().toISOString()
+    plateforme: fieldValue('plateforme'), commentaire: fd.get('commentaire') || null
   }
   try {
-    const { error } = await supabaseClient.from('ventes').insert(data)
-    if (error) throw error
-    toast('✅ Article ajouté')
-    closeMaster()
-    loadData()
-  } catch (e) {
-    toast('❌ ' + e.message)
-  }
+    await api('ventes', { method: 'POST', body: data })
+    toast('✅ Article ajouté'); closeMaster(); loadData()
+  } catch(e) { toast('❌ ' + e.message) }
 }
 
+// === FORMULAIRE VENTE ===
 window.toggleCustomSellPlateforme = function() {
-  const sel = $('#sel-sell-plateforme')
-  const inp = $('#custom-sell-plateforme')
+  const sel = $('#sel-sell-plateforme'); const inp = $('#custom-sell-plateforme')
   inp.style.display = sel.value === '__new__' ? 'block' : 'none'
   if (sel.value === '__new__') inp.focus()
 }
 
 function sellPlateformeValue() {
-  const sel = $('#sel-sell-plateforme')
-  const inp = $('#custom-sell-plateforme')
+  const sel = $('#sel-sell-plateforme'); const inp = $('#custom-sell-plateforme')
   if (sel.value === '__new__') return inp.value || null
   return sel.value || null
 }
@@ -471,93 +473,57 @@ async function sellItem(e, id) {
   const marge = (pv - (d.prix_achat || 0)) - dp
 
   try {
-    const { error } = await supabaseClient.from('ventes').update({
-      statut: 'vendu',
-      prix_vente: pv,
-      date_vente: dv,
-      marge,
-      plateforme: sellPlateformeValue() || d.plateforme || null,
-      depense_pub: dp || null,
-      statut_pub: fd.get('statut_pub') || null,
-      commentaire: fd.get('commentaire') || d.commentaire || null
-    }).eq('id', id)
-    if (error) throw error
-    toast('💰 Article vendu !')
-    closeMaster()
-    loadData()
-  } catch (e) {
-    toast('❌ ' + e.message)
-  }
+    await api(`ventes?id=eq.${id}`, {
+      method: 'PATCH',
+      body: {
+        statut: 'vendu', prix_vente: pv, date_vente: dv, marge,
+        plateforme: sellPlateformeValue() || d.plateforme || null,
+        depense_pub: dp || null, statut_pub: fd.get('statut_pub') || null,
+        commentaire: fd.get('commentaire') || d.commentaire || null
+      }
+    })
+    toast('💰 Article vendu !'); closeMaster(); loadData()
+  } catch(e) { toast('❌ ' + e.message) }
 }
 
-// Donne
+// === DONNÉ ===
 function showDonneForm() {
   closeFab()
   const stock = state.ventes.filter(d => d.statut === 'en_stock')
-  if (!stock.length) {
-    toast('📦 Aucun article en stock')
-    return
-  }
-  const listHtml = stock.map(d => `
-    <div class="search-card" style="border-left-color:var(--bleu);margin-bottom:6px;cursor:pointer" onclick="markDonne(${d.id})">
-      <div class=info>
-        <div class=nom>${escHtml(d.produit || '')}</div>
-        <div class=det>Acheté ${formatPrix(d.prix_achat)}</div>
-      </div>
-      <div class=mnt>🎁</div>
-    </div>
-  `).join('')
-
+  if (!stock.length) { toast('📦 Aucun article en stock'); return }
   openModal(`
     <div class=handle></div>
     <h2>🎁 Marquer comme donné</h2>
     <p style="color:var(--text2);margin-bottom:12px">Sélectionnez l'article :</p>
-    ${listHtml}
-    <div class=btn-group style="margin-top:12px">
-      <button class="btn-secondary" onclick="closeMaster()" style="width:100%">Annuler</button>
-    </div>
+    ${stock.map(d => `
+      <div class="search-card" style="border-left-color:var(--bleu);margin-bottom:6px;cursor:pointer" onclick="markDonne(${d.id})">
+        <div class=info><div class=nom>${escHtml(d.produit || '')}</div><div class=det>Acheté ${formatPrix(d.prix_achat)}</div></div>
+        <div class=mnt>🎁</div>
+      </div>
+    `).join('')}
+    <div class=btn-group style=margin-top:12px><button class=btn-secondary onclick="closeMaster()" style="width:100%">Annuler</button></div>
   `)
 }
 
 async function markDonne(id) {
   const d = state.ventes.find(x => x.id === id)
   try {
-    const { error } = await supabaseClient.from('ventes').update({
-      statut: 'donne',
-      prix_vente: 0,
-      marge: -(d?.prix_achat || 0),
-      date_vente: null,
-      commentaire: d?.commentaire || 'donné'
-    }).eq('id', id)
-    if (error) throw error
-    toast('🎁 Article donné')
-    closeMaster()
-    loadData()
-  } catch (e) {
-    toast('❌ ' + e.message)
-  }
+    await api(`ventes?id=eq.${id}`, { method: 'PATCH', body: { statut: 'donne', prix_vente: 0, marge: -(d?.prix_achat || 0), date_vente: null, commentaire: d?.commentaire || 'donné' } })
+    toast('🎁 Article donné'); closeMaster(); loadData()
+  } catch(e) { toast('❌ ' + e.message) }
 }
 
-// Delete
+// === SUPPRIMER ===
 async function deleteItem(id) {
   if (!confirm('Supprimer définitivement cet article ?')) return
   try {
-    const { error } = await supabaseClient.from('ventes').delete().eq('id', id)
-    if (error) throw error
-    toast('🗑 Article supprimé')
-    closeMaster()
-    loadData()
-  } catch (e) {
-    toast('❌ ' + e.message)
-  }
+    await api(`ventes?id=eq.${id}`, { method: 'DELETE' })
+    toast('🗑 Article supprimé'); closeMaster(); loadData()
+  } catch(e) { toast('❌ ' + e.message) }
 }
 
-// Events
+// === EVENTS ===
 function bindEvents() {
-  $('#overlay-master').addEventListener('click', e => {
-    if (e.target === $('#overlay-master')) closeMaster()
-  })
-  $('#searchOverlay').addEventListener('click', e => {
-    if (e.target === $('#searchOverlay')) closeSearch()
-  })
+  $('#overlay-master').addEventListener('click', e => { if (e.target === $('#overlay-master')) closeMaster() })
+  $('#searchOverlay').addEventListener('click', e => { if (e.target === $('#searchOverlay')) closeSearch() })
 }
