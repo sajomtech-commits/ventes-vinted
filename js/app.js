@@ -284,27 +284,43 @@ function closeFab() {
   $('#fabMenu').classList.remove('open')
 }
 
-function showSellFormFromFab() {
-  closeFab()
-  const stock = state.ventes.filter(d => d.statut === 'en_stock')
-  openModal(`
-    <div class=handle></div>
-    <h2>💰 Vendre un article</h2>
-    <p style="color:var(--text2);margin-bottom:12px">Sélectionnez l'article à vendre :</p>
-    ${stock.length ? stock.map(d => renderListItem(d)).join('') : '<div class=empty-state><p>Aucun article en stock</p></div>'}
-    <div class=btn-group style="margin-top:12px">
-      <button class="btn-secondary" onclick="closeMaster()" style="width:100%;padding:12px;border:none;border-radius:10px;background:#e2e8f0;color:#64748b;font-weight:600;font-size:14px;cursor:pointer">Annuler</button>
-    </div>
-  `)
-  // Replace renderListItem click to open sell form for stock items
-  // The renderListItem already calls openDetail, but we want sell form
-  // We'll override by adding a different onclick for this context
-  // Actually, renderListItem calls openDetail via onclick. Let me handle this differently.
+function distinctVals(field) {
+  const s = new Set()
+  state.ventes.forEach(d => { if (d[field]) s.add(d[field]) })
+  return [...s].sort()
 }
 
-// Override: in sell form mode, clicking a stock item goes to sell form
-// We need to handle this differently. Let me modify the approach.
-// Instead of using renderListItem which calls openDetail, let me create specific HTML
+function selectFieldHtml(name, label, placeholder) {
+  const vals = distinctVals(name)
+  const id = `sel-${name}`
+  return `
+    <label>${label}</label>
+    <select id="${id}" onchange="toggleCustomField('${name}')" style="width:100%;padding:12px;border:2px solid #e2e8f0;border-radius:10px;font-size:15px;outline:none;background:#f8fafc;margin-bottom:0">
+      <option value="">-- ${placeholder} --</option>
+      ${vals.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('')}
+      <option value="__new__">➕ Ajouter nouveau...</option>
+    </select>
+    <input id="custom-${name}" name="${name}" placeholder="${placeholder}" style="display:none;margin-top:8px;width:100%;padding:12px;border:2px solid #e2e8f0;border-radius:10px;font-size:15px;outline:none;background:#f8fafc">
+  `
+}
+
+window.toggleCustomField = function(name) {
+  const sel = $(`#sel-${name}`)
+  const inp = $(`#custom-${name}`)
+  if (sel.value === '__new__') {
+    inp.style.display = 'block'
+    inp.focus()
+  } else {
+    inp.style.display = 'none'
+  }
+}
+
+function fieldValue(name) {
+  const sel = $(`#sel-${name}`)
+  const inp = $(`#custom-${name}`)
+  if (sel.value === '__new__') return inp.value || null
+  return sel.value || null
+}
 
 function showSellFormFromFab() {
   closeFab()
@@ -346,17 +362,14 @@ function showAddForm() {
       <input name=produit required placeholder="Nom du produit">
       <label>Prix d'achat (€)</label>
       <input name=prix_achat type=number step=0.01 placeholder="0.00">
-      <label>Fournisseur</label>
-      <input name=fournisseur placeholder="Fournisseur">
-      <label>Source</label>
-      <input name=source placeholder="Ex: ACBUY, Vinted...">
+      ${selectFieldHtml('fournisseur', 'Fournisseur', 'Sélectionner ou ajouter')}
+      ${selectFieldHtml('source', 'Source', 'Sélectionner ou ajouter')}
       <label>Date d'achat</label>
       <input name=date_achat type=date value="${now()}">
-      <label>Plateforme</label>
-      <input name=plateforme placeholder="vinted, ebay...">
+      ${selectFieldHtml('plateforme', 'Plateforme', 'Sélectionner ou ajouter')}
       <label>Commentaire</label>
       <input name=commentaire placeholder="Optionnel">
-      <div class=btn-group>
+      <div class=btn-group style=margin-top:20px>
         <button type=button class=btn-secondary onclick="closeMaster()">Annuler</button>
         <button type=submit class=btn-primary>Ajouter</button>
       </div>
@@ -371,10 +384,10 @@ async function addItem(e) {
     produit: fd.get('produit'),
     statut: 'en_stock',
     prix_achat: fd.get('prix_achat') ? parseFloat(fd.get('prix_achat')) : null,
-    fournisseur: fd.get('fournisseur') || null,
-    source: fd.get('source') || null,
+    fournisseur: fieldValue('fournisseur'),
+    source: fieldValue('source'),
     date_achat: fd.get('date_achat') ? fd.get('date_achat').split('-').reverse().join('/') : null,
-    plateforme: fd.get('plateforme') || null,
+    plateforme: fieldValue('plateforme'),
     commentaire: fd.get('commentaire') || null,
     created_at: new Date().toISOString()
   }
@@ -389,6 +402,20 @@ async function addItem(e) {
   }
 }
 
+window.toggleCustomSellPlateforme = function() {
+  const sel = $('#sel-sell-plateforme')
+  const inp = $('#custom-sell-plateforme')
+  inp.style.display = sel.value === '__new__' ? 'block' : 'none'
+  if (sel.value === '__new__') inp.focus()
+}
+
+function sellPlateformeValue() {
+  const sel = $('#sel-sell-plateforme')
+  const inp = $('#custom-sell-plateforme')
+  if (sel.value === '__new__') return inp.value || null
+  return sel.value || null
+}
+
 function showSellForm(id) {
   const d = state.ventes.find(x => x.id === id)
   if (!d) return
@@ -401,7 +428,12 @@ function showSellForm(id) {
       <label>Date de vente</label>
       <input name=date_vente type=date value="${now()}">
       <label>Plateforme</label>
-      <input name=plateforme placeholder="vinted, ebay..." value="${d.plateforme || ''}">
+      <select id="sel-sell-plateforme" onchange="toggleCustomSellPlateforme()" style="width:100%;padding:12px;border:2px solid #e2e8f0;border-radius:10px;font-size:15px;outline:none;background:#f8fafc">
+        <option value="">-- Sélectionner --</option>
+        ${distinctVals('plateforme').map(v => `<option value="${escHtml(v)}"${v === d.plateforme ? ' selected' : ''}>${escHtml(v)}</option>`).join('')}
+        <option value="__new__">➕ Autre...</option>
+      </select>
+      <input id="custom-sell-plateforme" name=plateforme placeholder="Nouvelle plateforme" style="display:none;margin-top:8px;width:100%;padding:12px;border:2px solid #e2e8f0;border-radius:10px;font-size:15px;outline:none;background:#f8fafc" value="${d.plateforme || ''}">
       <label>Dépense pub (€)</label>
       <input name=depense_pub type=number step=0.01 placeholder="0.00" value="0">
       <label>Statut pub</label>
@@ -431,7 +463,7 @@ async function sellItem(e, id) {
       prix_vente: pv,
       date_vente: dv,
       marge,
-      plateforme: fd.get('plateforme') || d.plateforme || null,
+      plateforme: sellPlateformeValue() || d.plateforme || null,
       depense_pub: dp || null,
       statut_pub: fd.get('statut_pub') || null,
       commentaire: fd.get('commentaire') || d.commentaire || null
